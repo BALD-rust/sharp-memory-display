@@ -1,0 +1,18 @@
+[package]
+name = "sharp-memory-display"
+version = "0.0.0"
+edition = "2021"
+description = "A no-std-compatible embedded-hal driver for SHARP memory-in-pixel displays"
+license = "GPL-3.0+"
+readme = "README.md"
+documentation = "https://docs.rs/sharp-memory-display"
+repository = "https://git.sr.ht/~doesnotcompete/sharp-memory-display"
+categories = ["embedded", "hardware-support", "no-std"]
+keywords = ["memory-display", "embedded-hal-driver", "no-std", "lcd", "adafruit"]
+
+[dependencies]
+embedded-hal = "0.2.7"
+nb = "1.0.0"
+embedded-graphics = "0.7.1"
+bitvec = { version = "1.0.1", default-features = false }
+defmt = "0.3.0"
