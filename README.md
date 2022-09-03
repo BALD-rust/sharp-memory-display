@@ -29,9 +29,13 @@ let spi = spi::Config::new(&peripherals.MCLK, spi_sercom, pads, freq)
 
 // Create display
 let mut disp = MemoryDisplay::new(spi, cs, disp)
+disp.enable();
+disp.clear();
 ```
 
 Please note the maximum supported SPI baud rate for your display. You can find it in the corresponding [datasheet](https://www.sharpsde.com/products/displays/memory-lcd/).
+
+You can now use the display as a `DrawTarget`. To write the changes to the screen, you must invoke the `flush_buffer` function. Please see the documentation for notes on usage.
 
 **Note:** You must specify your display via `features`. Supported display models currently are:
  - `ls027b7dh01` (tested)

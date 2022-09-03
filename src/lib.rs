@@ -15,8 +15,9 @@
 //! Support for SHARP memory-in-pixel display devices via [`embedded_graphics`].
 //!
 //! # Usage                                                                                  
-//! Create a new [`MemoryDisplay`] and simply use it as an [`embedded_graphics`] [`DrawTarget`].
-//! You must flush the framebuffer with [`flush_buffer`] for the buffer to be written to the
+//! Create a new [`MemoryDisplay`] and simply use it as an [`embedded_graphics`]
+//! [`embedded_graphics::draw_target::DrawTarget`].
+//! You must flush the framebuffer with [`MemoryDisplay::flush_buffer`] for the buffer to be written to the
 //! screen.
 //!
 //! Please specify one of the supported displays via the Cargo `feature` flag. This sets
@@ -147,7 +148,6 @@ where
                 }
             }
         }
-        //self.flush_buffer(y_min as u8, y_max as u8);
         Ok(())
     }
 }
@@ -158,9 +158,9 @@ where
     CS: OutputPin,
     DISP: OutputPin,
 {
-    /// Create a new MemoryDisplay object
+    /// Create a new instance of `MemoryDisplay`.
     ///
-    /// Issue a `clear` before drawing to the display
+    /// Please issue a `clear` before drawing to the display.
     pub fn new(spi: SPI, mut cs: CS, mut disp: DISP) -> Self {
         let _ = disp.set_low();
         let _ = cs.set_low();
@@ -184,22 +184,26 @@ where
         }
     }
 
-    /// Enable the LCD
+    /// Enable the LCD by driving the display pin high.
     pub fn enable(&mut self) {
         let _ = self.disp.set_high();
     }
 
-    /// Disable the LCD
+    /// Disable the LCD.
     pub fn disable(&mut self) {
         let _ = self.disp.set_low();
     }
 
+    /// Sets a single pixel value in the internal framebuffer.
     pub fn set_pixel(&mut self, x: u32, y: u32, val: bool) {
         let line_buffer = &mut self.buffer[y as usize];
         line_buffer.set(x as usize, val);
     }
 
-    /// Draw the buffer to the screen
+    /// Draw the buffer to the screen. This function only updates the vertical section of the screen specified by `line_start` and `line_stop`.
+    ///
+    /// * `line_start` - The first line (y index) to update.
+    /// * `line_stop` - The last line to update.
     pub fn flush_buffer(&mut self, line_start: u8, line_stop: u8) {
         let _ = self.cs.set_high();
         self.vcom = !self.vcom;
@@ -254,6 +258,7 @@ where
         local_buffer.load::<u8>()
     }
 
+    /// Clear just the internal framebuffer, without writing changes to the display.
     pub fn clear_buffer(&mut self) {
         for y in 0..(self.size().height as usize) {
             let line_buffer = &mut self.buffer[y];
@@ -261,7 +266,7 @@ where
         }
     }
 
-    /// Clear the screen and the buffer
+    /// Clear the screen and the internal framebuffer.
     pub fn clear(&mut self) {
         self.clear_buffer();
         self.write_spi(&[MLCD_CM, MLCD_NO]);

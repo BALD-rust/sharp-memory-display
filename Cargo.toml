@@ -1,6 +1,6 @@
 [package]
 name = "sharp-memory-display"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "A no-std-compatible embedded-graphics driver for SHARP memory-in-pixel displays"
 license = "GPL-3.0+"
