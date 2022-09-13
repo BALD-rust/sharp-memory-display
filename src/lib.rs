@@ -62,12 +62,20 @@ pub struct MemoryDisplay<SPI, CS, DISP> {
     disp: DISP,
     #[cfg(feature = "ls027b7dh01")]
     buffer: [BitArr!(for 400, in u8, Lsb0); 240],
+    #[cfg(feature = "ls027b7dh01")]
+    touched: BitArr!(for 240, in u8, Lsb0),
     #[cfg(feature = "ls012b7dd06")]
     buffer: [BitArr!(for 240, in u8, Lsb0); 240],
+    #[cfg(feature = "ls012b7dd06")]
+    touched: BitArr!(for 240, in u8, Lsb0),
     #[cfg(feature = "ls010b7dh04")]
     buffer: [BitArr!(for 128, in u8, Lsb0); 128],
+    #[cfg(feature = "ls010b7dh04")]
+    touched: BitArr!(for 128, in u8, Lsb0),
     #[cfg(feature = "ls013b7dh05")]
     buffer: [BitArr!(for 144, in u8, Lsb0); 168],
+    #[cfg(feature = "ls013b7dh05")]
+    touched: BitArr!(for 168, in u8, Lsb0),
     vcom: bool,
 }
 
@@ -168,18 +176,27 @@ where
         // The framebuffer: a byte-array for every line
         #[cfg(feature = "ls027b7dh01")]
         let buffer = [bitarr![u8, Lsb0; 0; 400]; 240];
+        #[cfg(feature = "ls027b7dh01")]
+        let touched = bitarr![u8, Lsb0; 0; 240];
         #[cfg(feature = "ls012b7dd06")]
         let buffer = [bitarr![u8, Lsb0; 0; 240]; 240];
+        #[cfg(feature = "ls012b7dd06")]
+        let touched = bitarr![u8, Lsb0; 0; 240];
         #[cfg(feature = "ls010b7dh04")]
         let buffer = [bitarr![u8, Lsb0; 0; 128]; 128];
+        #[cfg(feature = "ls010b7dh04")]
+        let touched = bitarr![u8, Lsb0; 0; 128];
         #[cfg(feature = "ls013b7dh05")]
         let buffer = [bitarr![u8, Lsb0; 0; 144]; 168];
+        #[cfg(feature = "ls013b7dh05")]
+        let touched = bitarr![u8, Lsb0; 0; 168];
 
         Self {
             spi,
             cs,
             disp,
             buffer,
+            touched,
             vcom: true,
         }
     }
@@ -198,13 +215,12 @@ where
     pub fn set_pixel(&mut self, x: u32, y: u32, val: bool) {
         let line_buffer = &mut self.buffer[y as usize];
         line_buffer.set(x as usize, val);
+        self.touched.set(y as usize, true);
     }
 
-    /// Draw the buffer to the screen. This function only updates the vertical section of the screen specified by `line_start` and `line_stop`.
-    ///
-    /// * `line_start` - The first line (y index) to update.
-    /// * `line_stop` - The last line to update.
-    pub fn flush_buffer(&mut self, line_start: u8, line_stop: u8) {
+    /// Draw all lines of the buffer to the screen which have changed since last calling this
+    /// function.
+    pub fn flush_buffer(&mut self) {
         let _ = self.cs.set_high();
         self.vcom = !self.vcom;
 
@@ -213,10 +229,10 @@ where
         let _ = self.spi.write(&[MLCD_WR | vcom]);
 
         // Pack buffer into byte form and send
-        defmt::trace!("Flushing {} to {}", line_start, line_stop);
-        for y in line_start..line_stop {
+        for y in self.touched.iter_ones() {
             // Write line number (starting at 1)
-            let line_no = y + 1;
+            let line_no = (y + 1) as u8;
+            defmt::trace!("Writing line {}", line_no);
             let line_no_bits_msb = BitSlice::<u8, Lsb0>::from_element(&line_no);
             let line_no_bits = Self::swap(line_no_bits_msb);
 
@@ -245,6 +261,8 @@ where
         let _ = self.spi.write(&[MLCD_NO, MLCD_NO]);
 
         let _ = self.cs.set_low();
+
+        self.touched.fill(false);
     }
 
     /// Contrary to the MSB order most SPI devices use, the memory-in-pixel displays use LSB byte
