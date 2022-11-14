@@ -28,73 +28,95 @@ extern crate embedded_graphics;
 extern crate embedded_hal as hal;
 
 use bitvec::prelude::*;
-use core::convert::TryInto;
+use core::ops::{BitOr, Not};
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::{OriginDimensions, Size};
 use embedded_graphics::Pixel;
 use hal::blocking::spi::Write;
 use hal::digital::v2::OutputPin;
-use hal::spi::{Mode, Phase, Polarity}; // global logger
+use hal::spi::Mode;
 
 #[cfg(not(any(
     feature = "ls027b7dh01",
     feature = "ls012b7dd06",
     feature = "ls010b7dh04",
-    feature = "ls013b7dh05"
+    feature = "ls013b7dh05",
+    feature = "ls011b7dh03",
 )))]
 compile_error!("Please specify a display type via the feature flag");
 
-const MLCD_WR: u8 = 0x80; // write line command
-const MLCD_CM: u8 = 0x20; // clear memory command
-const MLCD_NO: u8 = 0x00; // nop command
-const VCOM_HI: u8 = 0x40;
-const VCOM_LO: u8 = 0x00;
+// Pull in the appropriate set of constants for the particular model of display
+#[cfg_attr(feature = "ls027b7dh01", path = "ls027b7dh01.rs")]
+#[cfg_attr(feature = "ls012b7dd06", path = "ls012b7dd06.rs")]
+#[cfg_attr(feature = "ls010b7dh04", path = "ls010b7dh04.rs")]
+#[cfg_attr(feature = "ls013b7dh05", path = "ls013b7dh05.rs")]
+#[cfg_attr(feature = "ls011b7dh03", path = "ls011b7dh03.rs")]
+mod display;
 
-pub const MODE: Mode = Mode {
-    polarity: Polarity::IdleLow,
-    phase: Phase::CaptureOnSecondTransition,
-};
+const DUMMY_DATA: u8 = 0x00; // This can really be anything, but the spec sheet recommends 0s
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Vcom {
+    // For details see the document https://www.sharpsde.com/fileadmin/products/Displays/2016_SDE_App_Note_for_Memory_LCD_programming_V1.3.pdf
+    Lo = 0x00, // 0b_0______ M1 == 0
+    Hi = 0x40, // 0b_1______ M1 == 1
+}
+
+impl Not for Vcom {
+    type Output = Self;
+
+    fn not(self) -> Self::Output {
+        match self {
+            Vcom::Lo => Vcom::Hi,
+            Vcom::Hi => Vcom::Lo,
+        }
+    }
+}
+
+impl BitOr<Command> for Vcom {
+    type Output = u8;
+
+    fn bitor(self, rhs: Command) -> Self::Output {
+        (self as u8) | (rhs as u8)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Command {
+    // For details see the document https://www.sharpsde.com/fileadmin/products/Displays/2016_SDE_App_Note_for_Memory_LCD_programming_V1.3.pdf
+    Nop = 0x00,         // 0b0_0_____ M0 == 0, M2 == 0
+    ClearMemory = 0x20, // 0b0_1_____ M0 == 0, M2 == 1
+    WriteLine = 0x80,   // 0b1_0_____ M0 == 1, M2 == 0
+}
+
+impl BitOr<Vcom> for Command {
+    type Output = u8;
+
+    fn bitor(self, rhs: Vcom) -> Self::Output {
+        (self as u8) | (rhs as u8)
+    }
+}
+
+/// Mode to configure the SPI device in in order to communicate with the display.
+pub const MODE: Mode = display::MODE;
+
+// Local write buffer size for a line: line number, then data (e.g. 400px / 8 bits = 50 bytes), followed by 8-bit trailer
+const WRITE_BUFFER_SIZE: usize = (display::WIDTH / 8) + 2;
 
 pub struct MemoryDisplay<SPI, CS, DISP> {
     spi: SPI,
     cs: CS,
     disp: DISP,
-    #[cfg(feature = "ls027b7dh01")]
-    buffer: [BitArr!(for 400, in u8, Lsb0); 240],
-    #[cfg(feature = "ls027b7dh01")]
-    touched: BitArr!(for 240, in u8, Lsb0),
-    #[cfg(feature = "ls012b7dd06")]
-    buffer: [BitArr!(for 240, in u8, Lsb0); 240],
-    #[cfg(feature = "ls012b7dd06")]
-    touched: BitArr!(for 240, in u8, Lsb0),
-    #[cfg(feature = "ls010b7dh04")]
-    buffer: [BitArr!(for 128, in u8, Lsb0); 128],
-    #[cfg(feature = "ls010b7dh04")]
-    touched: BitArr!(for 128, in u8, Lsb0),
-    #[cfg(feature = "ls013b7dh05")]
-    buffer: [BitArr!(for 144, in u8, Lsb0); 168],
-    #[cfg(feature = "ls013b7dh05")]
-    touched: BitArr!(for 168, in u8, Lsb0),
-    vcom: bool,
+    buffer: [BitArr!(for display::WIDTH, in u8, Lsb0); display::HEIGHT],
+    touched: BitArr!(for display::HEIGHT, in u8, Lsb0),
+    vcom: Vcom,
+    clear_state: BinaryColor,
 }
 
 impl<SPI, CS, DISP> OriginDimensions for MemoryDisplay<SPI, CS, DISP> {
-    #[cfg(feature = "ls027b7dh01")]
-    fn size(&self) -> embedded_graphics::prelude::Size {
-        Size::new(400, 240)
-    }
-    #[cfg(feature = "ls012b7dd06")]
-    fn size(&self) -> embedded_graphics::prelude::Size {
-        Size::new(240, 240)
-    }
-    #[cfg(feature = "ls010b7dh04")]
-    fn size(&self) -> embedded_graphics::prelude::Size {
-        Size::new(128, 128)
-    }
-    #[cfg(feature = "ls013b7dh05")]
-    fn size(&self) -> embedded_graphics::prelude::Size {
-        Size::new(144, 168)
+    fn size(&self) -> Size {
+        Size::new(display::WIDTH as u32, display::HEIGHT as u32)
     }
 }
 
@@ -111,49 +133,12 @@ where
     where
         T: IntoIterator<Item = Pixel<Self::Color>>,
     {
-        let y_min = (self.size().height + 1) as u32;
-        let (mut y_min, mut y_max) = (y_min, 0u32);
-
         for Pixel(coord, color) in item_pixels {
-            #[cfg(feature = "ls027b7dh01")]
-            if let Ok((x @ 0..=400, y @ 0..=240)) = coord.try_into() {
-                self.set_pixel(x as u32, y as u32, color.is_on());
-                if y < y_min {
-                    y_min = y
-                }
-                if y > y_max {
-                    y_max = y
-                }
-            }
-            #[cfg(feature = "ls012b7dd06")]
-            if let Ok((x @ 0..=240, y @ 0..=240)) = coord.try_into() {
-                self.set_pixel(x as u32, y as u32, color.is_on());
-                if y < y_min {
-                    y_min = y
-                }
-                if y > y_max {
-                    y_max = y
-                }
-            }
-            #[cfg(feature = "ls010b7dh04")]
-            if let Ok((x @ 0..=128, y @ 0..=128)) = coord.try_into() {
-                self.set_pixel(x as u32, y as u32, color.is_on());
-                if y < y_min {
-                    y_min = y
-                }
-                if y > y_max {
-                    y_max = y
-                }
-            }
-            #[cfg(feature = "ls013b7dh05")]
-            if let Ok((x @ 0..=144, y @ 0..=168)) = coord.try_into() {
-                self.set_pixel(x as u32, y as u32, color.is_on());
-                if y < y_min {
-                    y_min = y
-                }
-                if y > y_max {
-                    y_max = y
-                }
+            if coord.x < 0 || coord.x >= (display::WIDTH as i32) || coord.y < 0 || coord.y >= (display::HEIGHT as i32) {
+                // Ignore attempts to draw outside of display bounds, continue to next pixel
+                continue
+            } else {
+                unsafe { self.set_pixel(coord.x as u32, coord.y as u32, color) };
             }
         }
         Ok(())
@@ -174,22 +159,8 @@ where
         let _ = cs.set_low();
 
         // The framebuffer: a byte-array for every line
-        #[cfg(feature = "ls027b7dh01")]
-        let buffer = [bitarr![u8, Lsb0; 0; 400]; 240];
-        #[cfg(feature = "ls027b7dh01")]
-        let touched = bitarr![u8, Lsb0; 0; 240];
-        #[cfg(feature = "ls012b7dd06")]
-        let buffer = [bitarr![u8, Lsb0; 0; 240]; 240];
-        #[cfg(feature = "ls012b7dd06")]
-        let touched = bitarr![u8, Lsb0; 0; 240];
-        #[cfg(feature = "ls010b7dh04")]
-        let buffer = [bitarr![u8, Lsb0; 0; 128]; 128];
-        #[cfg(feature = "ls010b7dh04")]
-        let touched = bitarr![u8, Lsb0; 0; 128];
-        #[cfg(feature = "ls013b7dh05")]
-        let buffer = [bitarr![u8, Lsb0; 0; 144]; 168];
-        #[cfg(feature = "ls013b7dh05")]
-        let touched = bitarr![u8, Lsb0; 0; 168];
+        let buffer = [bitarr![u8, Lsb0; 0; display::WIDTH]; display::HEIGHT];
+        let touched = bitarr![u8, Lsb0; 0; display::HEIGHT];
 
         Self {
             spi,
@@ -197,8 +168,17 @@ where
             disp,
             buffer,
             touched,
-            vcom: true,
+            vcom: Vcom::Hi,
+            clear_state: BinaryColor::On,
         }
+    }
+
+    /// Set the value that screen buffer should be set to when issuing a clear command.
+    /// Note that this might be different from the state the hardware will set itself to.
+    /// You'll need to execute a flush_buffer following the call to clear if the
+    /// desired state differs from the default one in the hardware.
+    pub fn set_clear_state(&mut self, clear_state: BinaryColor) {
+        self.clear_state = clear_state;
     }
 
     /// Enable the LCD by driving the display pin high.
@@ -212,9 +192,13 @@ where
     }
 
     /// Sets a single pixel value in the internal framebuffer.
-    pub fn set_pixel(&mut self, x: u32, y: u32, val: bool) {
+    ///
+    /// N.B. This function does no bounds checking! Attempting to draw
+    /// to a location outside the bounds of the display will result in
+    /// a panic.
+    pub unsafe fn set_pixel(&mut self, x: u32, y: u32, val: BinaryColor) {
         let line_buffer = &mut self.buffer[y as usize];
-        line_buffer.set(x as usize, val);
+        line_buffer.set(x as usize, val.is_on());
         self.touched.set(y as usize, true);
     }
 
@@ -222,14 +206,18 @@ where
     /// function.
     pub fn flush_buffer(&mut self) {
         let _ = self.cs.set_high();
-        self.vcom = !self.vcom;
 
-        // Write main message
-        let vcom = if self.vcom { VCOM_HI } else { VCOM_LO };
-        let _ = self.spi.write(&[MLCD_WR | vcom]);
+        self.vcom = !self.vcom;
+        let _ = self.spi.write(&[Command::WriteLine | self.vcom]);
 
         // Pack buffer into byte form and send
         for y in self.touched.iter_ones() {
+            // Known problem with BitArr where if it's length isn't exactly divisible by the underlying storage size
+            // it will return indexes greater than its length. Break loop early if we've exceeded the size of buffer.
+            // https://github.com/bitvecto-rs/bitvec/issues/159 for details.
+            if y >= self.buffer.len() {
+                break;
+            }
             // Write line number (starting at 1)
             let line_no = (y + 1) as u8;
             defmt::trace!("Writing line {}", line_no);
@@ -238,27 +226,20 @@ where
 
             let line_buffer_msb = self.buffer[y as usize];
 
-            // Local write buffer for this line: line number, then data (e.g. 400px / 8 bits = 50 bytes), followed by 8-bit trailer
-            #[cfg(feature = "ls027b7dh01")]
-            let mut write_buffer = [0u8; 52];
-            #[cfg(feature = "ls027b7dd06")]
-            let mut write_buffer = [0u8; 32];
-            #[cfg(feature = "ls010b7dh04")]
-            let mut write_buffer = [0u8; 18];
-            #[cfg(feature = "ls013b7dh05")]
-            let mut write_buffer = [0u8; 20];
+            let mut write_buffer = [0u8; WRITE_BUFFER_SIZE];
             write_buffer[0] = line_no_bits;
 
             let mut chunks = line_buffer_msb.chunks(8);
             (1..(write_buffer.len() - 1)).for_each(|x| {
                 write_buffer[x] = Self::swap(chunks.next().unwrap());
             });
-            write_buffer[write_buffer.len() - 1] = MLCD_NO;
+            // Technically this is supposed to be part of the address of the following line, but we'll just send it here because it's easier
+            write_buffer[write_buffer.len() - 1] = DUMMY_DATA;
             let _ = self.spi.write(&write_buffer);
         }
 
-        // Write the 16-bit frame trailer
-        let _ = self.spi.write(&[MLCD_NO, MLCD_NO]);
+        // Write the 16-bit frame trailer (first 8 bits come from the end of the last line written)
+        let _ = self.spi.write(&[DUMMY_DATA]);
 
         let _ = self.cs.set_low();
 
@@ -280,14 +261,24 @@ where
     pub fn clear_buffer(&mut self) {
         for y in 0..(self.size().height as usize) {
             let line_buffer = &mut self.buffer[y];
-            line_buffer.fill(true);
+            line_buffer.fill(self.clear_state.is_on());
         }
+        self.touched.fill(true);
     }
 
     /// Clear the screen and the internal framebuffer.
     pub fn clear(&mut self) {
         self.clear_buffer();
-        self.write_spi(&[MLCD_CM, MLCD_NO]);
+        self.vcom = !self.vcom;
+        self.write_spi(&[Command::ClearMemory | self.vcom, DUMMY_DATA]);
+    }
+
+    /// Puts the display into power saving mode. This can also be used to send
+    /// the VCOM signal which Sharp recommends sending at least once a second.
+    /// No actual harm seems to come from failing to do so however.
+    pub fn display_mode(&mut self) {
+        self.vcom = !self.vcom;
+        self.write_spi(&[Command::Nop | self.vcom, DUMMY_DATA]);
     }
 
     /// Internal function for handling the chip select

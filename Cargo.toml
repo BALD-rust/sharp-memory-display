@@ -1,6 +1,6 @@
 [package]
 name = "sharp-memory-display"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "A no-std-compatible embedded-graphics driver for SHARP memory-in-pixel displays"
 license = "GPL-3.0+"
@@ -16,6 +16,7 @@ ls027b7dh01 = []
 ls012b7dd06 = []
 ls013b7dh05 = []
 ls010b7dh04 = []
+ls011b7dh03 = []
 
 [dependencies]
 embedded-hal = "0.2.7"

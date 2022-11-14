@@ -42,6 +42,7 @@ You can now use the display as a `DrawTarget`. To write the changes to the scree
  - `ls013b7dh05`
  - `ls012b7dd06`
  - `ls010b7dh04`
+ - `ls011b7dh03` (tested)
 
 Support for additional display models can be easily added. Merge requests are welcome :)
 
