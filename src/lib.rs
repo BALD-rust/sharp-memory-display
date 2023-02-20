@@ -220,7 +220,6 @@ where
             }
             // Write line number (starting at 1)
             let line_no = (y + 1) as u8;
-            defmt::trace!("Writing line {}", line_no);
             let line_no_bits_msb = BitSlice::<u8, Lsb0>::from_element(&line_no);
             let line_no_bits = Self::swap(line_no_bits_msb);
 

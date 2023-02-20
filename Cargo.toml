@@ -23,4 +23,3 @@ embedded-hal = "0.2.7"
 nb = "1.0.0"
 embedded-graphics = "0.7.1"
 bitvec = { version = "1.0.1", default-features = false }
-defmt = "0.3.0"
